@@ -1,0 +1,10 @@
+[package]
+name = "buddy_allocator"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+lego_spec = { git = "https://github.com/lego-os/lego_spec", features = [
+    "memory",
+    "phy",
+], branch = "main" }
