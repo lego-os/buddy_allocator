@@ -1,4 +1,4 @@
-use crate::block::BlockVec;
+use crate::{block::BlockVec, MIN_INDEX_LEVEL};
 use core::ptr;
 
 pub(crate) struct SkipList {
@@ -26,33 +26,33 @@ impl SkipList {
             index_level = levels - 1;
         }
         let new_block_vec = BlockVec::new(addr, index_level + 1);
-        let mut current_vec = self.heads;
+        let mut current_addr = self.heads as usize;
         for index in (0..levels).rev() {
-            let mut current_block = (*current_vec).index[index];
-            let mut next_block = (*current_block).next;
-            while !next_block.is_null() || (next_block as usize) < addr {
-                current_block = next_block;
+            let vec = BlockVec::from_addr(current_addr);
+            let mut next_block = (*vec).get(index);
+            while !next_block.is_null() && (next_block as usize) < addr {
+                current_addr = next_block as usize & !(1 << (index + MIN_INDEX_LEVEL) - 1);
                 next_block = (*next_block).next;
             }
             if index <= index_level {
-                let new_block = (*new_block_vec).index[index];
+                let new_block = (*new_block_vec).get(index);
+                let current_block = (*vec).get(index);
                 (*current_block).next = new_block;
                 (*new_block).next = next_block;
             }
-            current_vec = BlockVec::new(current_block as usize, index + 1);
         }
     }
 
     pub unsafe fn pop(&mut self) -> Option<*mut u8> {
-        let first = (*(*self.heads).index[0]).next;
+        let first = (*(*self.heads).get(0)).next;
         if first.is_null() {
             return None;
         }
         let block_vec = BlockVec::from_addr(first as usize);
         let levels = (*block_vec).levels;
         for index in 0..levels {
-            let head = (*self.heads).index[index];
-            let first_block = (*block_vec).index[index];
+            let head = (*self.heads).get(index);
+            let first_block = (*block_vec).get(index);
             (*head).next = (*first_block).next;
         }
         Some(first as *mut u8)
@@ -65,7 +65,7 @@ impl SkipList {
     ) -> Option<*mut u8> {
         let mut res = None;
         let power = (size.trailing_zeros() - self.block_size.trailing_zeros()) as usize;
-        let pre = (*self.heads).index[power];
+        let pre = (*self.heads).get(power);
         let mut current = (*pre).next;
         while current.is_null() {
             if calculate_blk_index(current as usize, self.block_size) % 2 == 0 {
@@ -84,14 +84,14 @@ impl SkipList {
                 if index == power {
                     continue;
                 }
-                let mut p = (*vec).index[index];
+                let mut p = (*vec).get(index);
                 let mut n = (*p).next;
                 while current_addr > n as usize {
                     p = n;
                     n = (*n).next;
                 }
                 if current_level <= index {
-                    (*p).next = (*(*current_vec).index[index]).next;
+                    (*p).next = (*(*current_vec).get(index)).next;
                 }
                 vec = BlockVec::from_addr(pre as usize);
             }

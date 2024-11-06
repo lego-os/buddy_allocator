@@ -1,11 +1,13 @@
 #![no_std]
+mod block;
 mod buddy;
 mod list;
-mod block;
 use list::*;
 
 pub use buddy::BuddyAllocator;
-const MAX_INDEX_LEVEL:usize = 30;
+const MAX_INDEX_LEVEL: usize = 30;
+const MIN_PAGE_SIZE:usize = 4096;
+const MIN_INDEX_LEVEL: usize = 12;
 #[inline]
 fn logarithmic_two_up(num: usize) -> usize {
     let trailing_zeros = num.trailing_zeros() as usize;

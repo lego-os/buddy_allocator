@@ -2,13 +2,12 @@ use core::alloc::Layout;
 
 use crate::{
     block::BLOCK_VEC_SIZE, logarithmic_two_down, logarithmic_two_up, page_round_up, SkipList,
+    MIN_INDEX_LEVEL, MIN_PAGE_SIZE,
 };
 use lego_spec::memory::{AllocError, PhysicalPageAllocator};
 
 pub struct BuddyAllocator<const BUDDY_POWER_NUM: usize> {
     free_lists: [SkipList; BUDDY_POWER_NUM],
-    // 最小页尺寸
-    page_size: usize,
     // 内存开始地址
     start_addr: usize,
     // SkipList 头部之后的第一块内存地址
@@ -21,12 +20,11 @@ pub struct BuddyAllocator<const BUDDY_POWER_NUM: usize> {
 
 impl<const BUDDY_POWER_NUM: usize> BuddyAllocator<BUDDY_POWER_NUM> {
     /// # Safety
-    pub const fn new(start_addr: usize, end_addr: usize, page_size: usize) -> Self {
-        assert!(start_addr % page_size == 0 && end_addr % page_size == 0);
+    pub const fn new(start_addr: usize, end_addr: usize) -> Self {
+        assert!(start_addr % MIN_PAGE_SIZE == 0 && end_addr % MIN_PAGE_SIZE == 0);
         Self {
             free_lists: [const { unsafe { SkipList::new() } }; BUDDY_POWER_NUM],
             start_addr,
-            page_size,
             total_size: end_addr - start_addr,
             free_size: 0,
             free_start: 0,
@@ -36,13 +34,11 @@ impl<const BUDDY_POWER_NUM: usize> BuddyAllocator<BUDDY_POWER_NUM> {
     /// # Safety
     pub unsafe fn init(&mut self, kernel_end: usize) {
         let lists_heads_size = BLOCK_VEC_SIZE * BUDDY_POWER_NUM;
-        self.free_start = page_round_up(kernel_end + lists_heads_size, self.page_size);
-
+        self.free_start = page_round_up(kernel_end + lists_heads_size, MIN_PAGE_SIZE);
         let end_addr = self.start_addr + self.total_size;
         assert!(kernel_end > self.start_addr && self.free_start < end_addr);
-
         let size = end_addr - self.free_start;
-        let min_power = self.page_size.trailing_zeros() as usize;
+        let min_power = MIN_INDEX_LEVEL;
         self.free_lists
             .iter_mut()
             .enumerate()
@@ -53,12 +49,11 @@ impl<const BUDDY_POWER_NUM: usize> BuddyAllocator<BUDDY_POWER_NUM> {
                 let levels = logarithmic_two_down(size / block_size);
                 list.init(head_start, block_size, levels);
             });
-
         let mut current_addr = self.free_start;
         let mut blk_idx = 0;
         while current_addr < end_addr {
             self.free_lists[0].insert(current_addr, blk_idx);
-            current_addr += self.page_size;
+            current_addr += MIN_PAGE_SIZE;
             blk_idx += 1;
         }
         self.free_size = end_addr - self.free_start;
@@ -89,13 +84,13 @@ unsafe impl<const BUDDY_POWER: usize> PhysicalPageAllocator for BuddyAllocator<B
     }
 
     unsafe fn alloc_pages(&mut self, layout: Layout) -> Result<*mut u8, AllocError> {
-        let ly = match layout.align_to(self.page_size) {
+        let ly = match layout.align_to(MIN_PAGE_SIZE) {
             Ok(ly) => ly,
             Err(_) => return Err(AllocError::Misaligned(layout)),
         };
         let power = logarithmic_two_up(ly.pad_to_align().size());
         let size = 1 << power;
-        let pos = power - self.page_size.trailing_zeros() as usize;
+        let pos = power - MIN_INDEX_LEVEL;
         if let Some(ptr) = self.free_lists[pos].pop() {
             return Ok(ptr);
         }
@@ -125,7 +120,7 @@ unsafe impl<const BUDDY_POWER: usize> PhysicalPageAllocator for BuddyAllocator<B
             return Err(AllocError::IllegalAddr(addr));
         }
         let offset = ptr as usize - self.start_addr;
-        let ly = match layout.align_to(self.page_size) {
+        let ly = match layout.align_to(MIN_PAGE_SIZE) {
             Ok(ly) => ly,
             Err(_) => return Err(AllocError::Misaligned(layout)),
         };
@@ -134,7 +129,7 @@ unsafe impl<const BUDDY_POWER: usize> PhysicalPageAllocator for BuddyAllocator<B
         if offset % size != 0 {
             return Err(AllocError::Misaligned(layout));
         }
-        let pos = power - self.page_size.trailing_zeros() as usize;
+        let pos = power - MIN_INDEX_LEVEL;
         if pos <= self.free_lists.len() {
             self.free_lists[pos].insert(addr, offset / size);
         } else {
